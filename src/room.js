@@ -4,6 +4,8 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { doorShake, DURATION } from './pounding.js';
+import { LIMIT } from './siege.js';
 
 // All surfaces are generated locally; a fixed seed keeps the wear consistent.
 let seed=1992;
@@ -75,8 +77,8 @@ export async function buildRoom(scene){
   function lathe(points,m,x,y,z){return mesh(new THREE.LatheGeometry(points.map(p=>new THREE.Vector2(...p)),64),m,x,y,z);}
   function tube(points,r,m,parent=room){return mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points.map(p=>new THREE.Vector3(...p))),40,r,8,false),m,0,0,0,parent);}
   function torus(r,t,m,x,y,z){const o=mesh(new THREE.TorusGeometry(r,t,8,64),m,x,y,z);o.rotation.x=Math.PI/2;return o;}
-  function ball(x,y,z,sx,sy,sz,m){const o=mesh(new THREE.SphereGeometry(1,24,16),m,x,y,z);o.scale.set(sx,sy,sz);return o;}
-  function nail(x,y,z){const o=mesh(new THREE.CylinderGeometry(.012,.012,.009,10),iron,x,y,z);o.rotation.x=Math.PI/2;box(.013,.002,.002,black,x,y,z+.006,0);}
+  function ball(x,y,z,sx,sy,sz,m,parent=room){const o=mesh(new THREE.SphereGeometry(1,24,16),m,x,y,z,parent);o.scale.set(sx,sy,sz);return o;}
+  function nail(x,y,z,parent=room){const o=mesh(new THREE.CylinderGeometry(.012,.012,.009,10),iron,x,y,z,parent);o.rotation.x=Math.PI/2;box(.013,.002,.002,black,x,y,z+.006,0,parent);}
   // Less than thirteen square metres, with a low ceiling and worn cement floor.
   box(6,.15,4.9,cement,0,-.055,-.35,0);
   box(6,3.5,.16,plaster,0,1.75,-2.8,0);
@@ -128,12 +130,28 @@ export async function buildRoom(scene){
   box(.1,4,8,material('plaster','#465650'),-4.4,1.5,-.5,0);
   const night=new THREE.MeshBasicMaterial({color:'#263e40'});box(.05,5,10,night,-6,2,-.5,0);
   // Planked door with joinery, hinges and an interior sliding bolt.
-  for(let x=1.57;x<2.64;x+=.18)box(.175,2.53,.10,wood,x,1.285,-2.67);
+  // The frame is fixed; the leaf hangs in its own group, pivoted on the hinge edge, so it can be shaken.
   for(const x of [1.45,2.72])box(.1,2.7,.18,woodDark,x,1.35,-2.61);
   box(1.38,.11,.19,woodDark,2.09,2.7,-2.61);
-  for(const y of [.36,2.15]){box(1.07,.13,.07,woodDark,2.1,y,-2.57);for(const x of [1.62,2.53])nail(x,y,-2.527);}
-  box(.13,.18,.028,iron,2.45,1.18,-2.585);ball(2.45,1.18,-2.535,.046,.046,.055,brass);
-  box(.31,.06,.05,iron,2.55,1.58,-2.53);rod([2.42,1.58,-2.48],[2.72,1.58,-2.48],.016);rod([2.52,1.58,-2.48],[2.52,1.65,-2.48],.016);
+  // The leaf fills the frame exactly, its back face just clear of the plaster, hung on the stile's inner face.
+  const door=new THREE.Group(),hinge=new THREE.Vector3(1.50,0,-2.665);room.add(door);
+  for(let i=0;i<6;i++)box(.19,2.62,.10,wood,1.595+i*.195,1.33,-2.665,.008,door);
+  for(const y of [.36,2.15]){box(1.13,.13,.07,woodDark,2.085,y,-2.58,.008,door);for(const x of [1.62,2.55])nail(x,y,-2.541,door);}
+  box(.13,.18,.028,iron,2.45,1.18,-2.60,.008,door);ball(2.45,1.18,-2.55,.046,.046,.055,brass,door);
+  box(.31,.06,.05,iron,2.55,1.58,-2.59,.008,door);
+  const bolt=new THREE.Group();door.add(bolt);rod([2.42,1.58,-2.55],[2.72,1.58,-2.55],.016,iron,bolt);rod([2.52,1.58,-2.55],[2.52,1.65,-2.55],.016,iron,bolt);
+  door.traverse(o=>{o.userData.dynamic=true;if(o.isMesh)o.position.sub(hinge);});door.position.copy(hinge);
+  // A bakelite switch beside the frame. Its lever is the only part that moves.
+  const bakelite=new THREE.MeshStandardMaterial({color:'#2b2622',roughness:.45});
+  box(.095,.135,.02,bakelite,1.18,1.35,-2.71,.004);
+  const lever=new THREE.Group();lever.position.set(1.18,1.35,-2.70);room.add(lever);
+  box(.028,.064,.03,ceramic,0,0,.015,.005,lever);lever.traverse(o=>{o.userData.dynamic=true;});
+  let leverVelocity=0;
+  // A little plaster falls from the lintel when the door is struck.
+  const grit=new THREE.BufferGeometry(),gritPositions=new Float32Array(30*3),gritVelocity=new Float32Array(30*3);
+  grit.setAttribute('position',new THREE.BufferAttribute(gritPositions,3));
+  const gritPoints=new THREE.Points(grit,new THREE.PointsMaterial({color:'#d0c9b0',size:.014,transparent:true,opacity:0,depthWrite:false}));gritPoints.frustumCulled=false;room.add(gritPoints);
+  let gritAge=Infinity,lastTime=0;
   // A small crucifix left by the owner; dark wood and a worn metal corpus.
   box(.09,.68,.045,woodDark,-1.59,2.66,-2.67);box(.37,.075,.047,woodDark,-1.59,2.8,-2.65);
   ball(-1.59,2.86,-2.59,.035,.044,.023,brass);rod([-1.59,2.82,-2.58],[-1.59,2.64,-2.58],.027,brass);
@@ -228,11 +246,22 @@ export async function buildRoom(scene){
   box(.36,.055,.85,wood,2.74,2.43,-.4);
   for(const z of [-.72,-.08]){rod([2.91,2.1,z],[2.58,2.40,z],.018,iron);}
   lathe([[0,0],[.075,0],[.08,.15],[.075,.16],[.065,.16],[.065,.025],[0,.025]],enamel,2.72,2.46,-.40);
-  // Unlit electrical fitting: the only light inside comes from kerosene.
+  // A weak electric bulb on a bare cord, wired to the switch by the door.
   tube([[2.86,2.8,-2.65],[2.86,3.32,-2.65],[.42,3.36,-2.65],[.42,3.4,-.55],[.42,3.08,-.55]],.006,black);
   lathe([[.045,0],[.045,.08],[.025,.12]],ceramic,.42,2.96,-.55);
-  ball(.42,2.9,-.55,.058,.082,.058,new THREE.MeshStandardMaterial({color:'#b0a88b',roughness:.43}));
+  const bulbMat=new THREE.MeshStandardMaterial({color:'#b0a88b',roughness:.43,emissive:'#ffd9a0',emissiveIntensity:1.4});
+  ball(.42,2.9,-.55,.058,.082,.058,bulbMat);
+  const bulb=new THREE.PointLight('#ffe3b4',5.5,10,2);bulb.position.set(.42,2.8,-.55);bulb.castShadow=true;bulb.shadow.mapSize.set(512,512);bulb.shadow.bias=-.0005;bulb.shadow.normalBias=.01;room.add(bulb);
+  // The switch only records the change; update() flicks the lever and warms the filament.
+  let lightOn=true,switchedAt=-Infinity;
+  function setLight(on){if(on===lightOn)return;lightOn=on;switchedAt=lastTime;}
   const ambient=new THREE.HemisphereLight('#a5bebc','#544536',.34);scene.add(ambient);
+  // With the current cut, the kerosene lamp is turned right down: a candle's worth of light and a nervous flame.
+  let lampGlow=1;
+  function applyLight(t,dt){const since=Math.min(t-switchedAt,10),warm=lightOn?1-.65*Math.exp(-since*5)*(.4+.6*Math.abs(Math.sin(since*75))):0;bulb.visible=lightOn;bulb.intensity=5.5*warm;bulbMat.emissiveIntensity=1.6*warm;
+    lampGlow+=((lightOn?1:.22)-lampGlow)*Math.min(1,dt*3.5);const nervous=1+(1-lampGlow)*.35*(Math.sin(t*23)*.5+Math.sin(t*37)*.3+Math.sin(t*5.3)*.2);
+    lamp.intensity=(6+Math.sin(t*7)*.13+Math.sin(t*13)*.09)*lampGlow*nervous;flame.scale.y=.067*(.55+.45*lampGlow)*nervous;
+    ambient.intensity=(lightOn?.34:.08);bounce.intensity=.65*lampGlow;}
   const windowLight=new THREE.PointLight('#9bbdbc',4.5,8,2);windowLight.position.set(-3.3,2.15,-.6);windowLight.castShadow=true;windowLight.shadow.mapSize.set(1024,1024);windowLight.shadow.normalBias=.02;room.add(windowLight);
   const bounce=new THREE.PointLight('#d59c60',.65,5,2);bounce.position.set(.3,1.7,-1.15);room.add(bounce);
   const dustGeo=new THREE.BufferGeometry(),dustPositions=new Float32Array(100*3);for(let i=0;i<100;i++){dustPositions[i*3]=-2.8+random()*5.5;dustPositions[i*3+1]=.5+random()*2.5;dustPositions[i*3+2]=-2.5+random()*4.3;}dustGeo.setAttribute('position',new THREE.BufferAttribute(dustPositions,3));
@@ -241,28 +270,52 @@ export async function buildRoom(scene){
   await Promise.all(loadJobs);
   // Bake opaque, stationary meshes by material into shared draw batches.
   // Transparent cloth/glass and animated meshes retain their own render order.
+  // The door leaf is baked on its own so it can move as one; the bolt stays loose to rattle.
   room.updateMatrixWorld(true);
-  const inverseRoom=room.matrixWorld.clone().invert(),batches=new Map(),originals=[];
-  room.traverse(o=>{
-    if(!o.isMesh||o===flame||o===mirror||o===core||Array.isArray(o.material)||o.material.transparent)return;
-    const key=`${o.material.uuid}:${o.castShadow}:${o.receiveShadow}`;
-    if(!batches.has(key))batches.set(key,{material:o.material,cast:o.castShadow,receive:o.receiveShadow,geometries:[]});
-    let geometry=o.geometry.clone();geometry.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverseRoom,o.matrixWorld));
-    if(geometry.index){const indexed=geometry;geometry=geometry.toNonIndexed();indexed.dispose();}
-    for(const name of Object.keys(geometry.attributes))if(!['position','normal','uv'].includes(name))geometry.deleteAttribute(name);
-    if(!geometry.attributes.uv)geometry.setAttribute('uv',new THREE.BufferAttribute(new Float32Array(geometry.attributes.position.count*2),2));
-    batches.get(key).geometries.push(geometry);originals.push(o);
-  });
-  for(const batch of batches.values()){
-    const geometry=mergeGeometries(batch.geometries);const merged=new THREE.Mesh(geometry,batch.material);merged.castShadow=batch.cast;merged.receiveShadow=batch.receive;room.add(merged);
-    for(const g of batch.geometries)g.dispose();
+  function bake(group,skip){
+    const inverse=group.matrixWorld.clone().invert(),batches=new Map(),originals=[];
+    group.traverse(o=>{
+      if(!o.isMesh||o===flame||o===mirror||o===core||Array.isArray(o.material)||o.material.transparent||skip(o))return;
+      const key=`${o.material.uuid}:${o.castShadow}:${o.receiveShadow}`;
+      if(!batches.has(key))batches.set(key,{material:o.material,cast:o.castShadow,receive:o.receiveShadow,geometries:[]});
+      let geometry=o.geometry.clone();geometry.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverse,o.matrixWorld));
+      if(geometry.index){const indexed=geometry;geometry=geometry.toNonIndexed();indexed.dispose();}
+      for(const name of Object.keys(geometry.attributes))if(!['position','normal','uv'].includes(name))geometry.deleteAttribute(name);
+      if(!geometry.attributes.uv)geometry.setAttribute('uv',new THREE.BufferAttribute(new Float32Array(geometry.attributes.position.count*2),2));
+      batches.get(key).geometries.push(geometry);originals.push(o);
+    });
+    for(const batch of batches.values()){
+      const geometry=mergeGeometries(batch.geometries);const merged=new THREE.Mesh(geometry,batch.material);merged.castShadow=batch.cast;merged.receiveShadow=batch.receive;group.add(merged);
+      for(const g of batch.geometries)g.dispose();
+    }
+    for(const o of originals){o.removeFromParent();o.geometry.dispose();}
+    return {before:originals.length,after:batches.size};
   }
-  for(const o of originals){o.removeFromParent();o.geometry.dispose();}
-  let lastNetUpdate=-1;
-  return {room,lamp,flame,batching:{before:originals.length,after:batches.size},update(t){
-    lamp.intensity=6+Math.sin(t*7)*.13+Math.sin(t*13)*.09;
+  const roomBatch=bake(room,o=>o.userData.dynamic),doorBatch=bake(door,o=>bolt.children.includes(o));
+  let lastNetUpdate=-1,lastPhase='quiet',lastPass=-1;
+  function spawnGrit(spread){for(let i=0;i<30;i++){gritPositions[i*3]=1.5+random()*1.2;gritPositions[i*3+1]=2.62;gritPositions[i*3+2]=-2.6+random()*.06;gritVelocity[i*3]=(random()-.5)*.15*spread;gritVelocity[i*3+1]=-random()*.2;gritVelocity[i*3+2]=random()*.2*spread;}gritAge=0;}
+  return {room,lamp,flame,door,setLight,lightOn:()=>lightOn,batching:{before:roomBatch.before+doorBatch.before,after:roomBatch.after+doorBatch.after},update(t,siege={phase:'quiet',elapsed:0}){
     flame.scale.x=.022*(1+Math.sin(t*8)*.10);
     dust.rotation.y=Math.sin(t*.025)*.025;
+    const dt=Math.min(1/30,Math.max(0,t-lastTime));lastTime=t;
+    applyLight(t,dt);
+    // The lever snaps over with a little overshoot, like a stiff old toggle.
+    const leverTarget=lightOn?-.5:.5;leverVelocity=(leverVelocity+(leverTarget-lever.rotation.x)*1400*dt)*Math.exp(-dt*26);lever.rotation.x+=leverVelocity*dt;
+    const {phase,elapsed}=siege;
+    if(phase==='pounding'){
+      // The leaf gives against the frame and the bolt chatters, harder with every pass.
+      // Harder with every pass, and dying away as the visitor loses interest in a dark room.
+      const grow=(1+elapsed/LIMIT*.8)*(siege.presence??1),shake=doorShake(elapsed%DURATION),pass=Math.floor(elapsed/DURATION);
+      door.rotation.y=-shake.angle*grow;door.position.z=hinge.z+shake.push*grow;bolt.position.set(shake.rattle*grow,0,0);bolt.rotation.z=0;
+      if(lastPhase!=='pounding'||pass!==lastPass)spawnGrit(1);lastPass=pass;
+    }else if(phase==='broken'){
+      // The bolt tears out; the door slams open into the room and the bolt drops.
+      const e=elapsed,open=1.5*(1-Math.exp(-e*9))-.12*Math.exp(-e*3)*Math.sin(e*20);
+      door.rotation.y=-open;door.position.z=hinge.z;bolt.position.set(.05*e,-Math.min(1.52,4*e*e),.1*e);bolt.rotation.z=-Math.min(1.2,e*3);
+      if(lastPhase!=='broken')spawnGrit(3);
+    }else{door.rotation.y=0;door.position.z=hinge.z;bolt.position.set(0,0,0);bolt.rotation.z=0;}
+    lastPhase=phase;
+    if(gritAge<1.6){gritAge+=dt;for(let i=0;i<30;i++){gritVelocity[i*3+1]-=2.2*dt;for(let k=0;k<3;k++)gritPositions[i*3+k]+=gritVelocity[i*3+k]*dt;}grit.attributes.position.needsUpdate=true;gritPoints.material.opacity=.55*Math.max(0,1-gritAge/1.6);}
     if(t-lastNetUpdate<1/20)return;lastNetUpdate=t;
     for(const panel of netPanels){const p=panel.mesh.geometry.attributes.position,b=panel.base;for(let i=0;i<p.count;i++){const y=b[i*3+1];p.setX(i,b[i*3]+Math.sin(t*.7+b[i*3+2]*2+y)*.005*(1-y/2.8));}p.needsUpdate=true;}
   }};

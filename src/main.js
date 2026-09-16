@@ -2,7 +2,11 @@ import * as THREE from 'three';
 import { buildRoom } from './room.js';
 import { setupUI } from './ui.js';
 import { EYE_HEIGHT, FLOOR_HEIGHT, startJump, createMotion, stepPlayer } from './movement.js';
+import { DURATION } from './pounding.js';
+import { createSiege, stepSiege, setLight } from './siege.js';
+import { schedulePounding, scheduleBreak, scheduleClick } from './knock-audio.js';
 
+const INTRO='Grandmother rents the rooms she can spare. This one is yours for the night. If someone knocks, put out the light and keep still until they leave.';
 const canvas = document.querySelector('#scene');
 const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
 let renderScale=Math.min(devicePixelRatio,1.5);
@@ -24,7 +28,8 @@ renderer.shadowMap.autoUpdate=false;
 renderer.shadowMap.needsUpdate=true;
 const jump=createMotion();
 
-const details=[{x:-1.8,z:.15,r:1.6,title:'THE SINGLE BED',text:'A thin mattress remembers other sleepers. The mosquito net has been mended where it meets the frame.'},{x:-.55,z:-1.82,r:1.1,title:'THE KEROSENE LAMP',text:'The current has gone again. A small flame keeps the room from disappearing.'},{x:.65,z:-2.2,r:1.05,title:'THE WASHSTAND',text:'A pitcher of water. An enamel basin. Enough to wash the dust from your face before bed.'},{x:2.04,z:-2.5,r:1.05,title:'THE CLOSED DOOR',text:'Beyond this door, the other rented rooms are quiet. Grandmother has already drawn the bolt.'},{x:-2.7,z:-.65,r:1.45,title:'THE SHUTTERS',text:'Wooden louvers keep out the gaze, but never the sound. A distant whistle passes through the slats.'},{x:2.25,z:1,r:.85,title:'YOUR BELONGINGS',text:'A change of clothes in a small bag. You have left it closed, as if you might not stay.'}];
+// E does one thing in this room: the light switch beside the door.
+const details=[{x:1.18,z:-2.5,r:.8,title:'THE LIGHT SWITCH',prompt:'flip the light switch',action:()=>flipSwitch()}];
 const keys=new Set();let nearby=null;
 const ui=setupUI({canvas,keys});
 let dragging=false, lastPointer=null;
@@ -37,15 +42,41 @@ canvas.addEventListener('pointerdown',e=>{dragging=true;lastPointer={x:e.clientX
 canvas.addEventListener('pointermove',e=>{if(document.pointerLockElement===canvas)return;if(dragging&&lastPointer){look(e.clientX-lastPointer.x,e.clientY-lastPointer.y);lastPointer={x:e.clientX,y:e.clientY};}});
 for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,()=>{dragging=false;lastPointer=null;});
 document.addEventListener('mousemove',e=>{if(document.pointerLockElement===canvas)look(e.movementX,e.movementY);});
-function inspect(){if(!nearby)return;ui.showNote();document.querySelector('#note-label').textContent=nearby.title;document.querySelector('#note-text').textContent=nearby.text;}
+function inspect(){nearby?.action();}
 window.addEventListener('keydown',e=>{if(ui.paused())return;if(e.code==='Space'&&!(e.target instanceof HTMLButtonElement)){e.preventDefault();if(!e.repeat)startJump(jump);return;}if(['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright','e'].includes(e.key.toLowerCase())){if(e.target instanceof HTMLButtonElement && e.key.toLowerCase()==='e')return;e.preventDefault();keys.add(e.key.toLowerCase());if(e.key.toLowerCase()==='e'&&!e.repeat)inspect();}});
 window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>keys.clear());document.addEventListener('visibilitychange',()=>keys.clear());
 document.querySelectorAll('[data-key]').forEach(b=>{b.addEventListener('pointerdown',e=>{e.preventDefault();b.setPointerCapture(e.pointerId);keys.add(b.dataset.key);if(b.dataset.key==='e')inspect();if(b.dataset.key==='jump')startJump(jump);});for(const event of ['pointerup','pointercancel','lostpointercapture'])b.addEventListener(event,()=>keys.delete(b.dataset.key));});
 document.querySelector('#prompt').addEventListener('click',inspect);
-document.querySelector('#reset').addEventListener('click',()=>{player.set(.5,0,1.45);Object.assign(jump,createMotion());yaw=.40;pitch=-.06;keys.clear();document.querySelector('#note-label').textContent='THE GUEST ROOM';document.querySelector('#note-text').textContent='Grandmother rents the rooms she can spare. This one is yours for the night.';});
+function resetRoom(){player.set(.5,0,1.45);Object.assign(jump,createMotion());yaw=.40;pitch=-.06;keys.clear();document.querySelector('#note-label').textContent='THE GUEST ROOM';document.querySelector('#note-text').textContent=INTRO;Object.assign(siege,createSiege());passAudio?.stop();passAudio=null;lastPass=-1;environment.setLight(true);renderer.shadowMap.needsUpdate=true;clearTimeout(gameOverTimer);gameOver.close();}
+document.querySelector('#reset').addEventListener('click',resetRoom);
+document.querySelector('#restart').addEventListener('click',resetRoom);
 // Optional synthesized night ambience; begins only after the sound button is used.
+// The same context and master gain carry the pounding on the door, so one toggle rules all sound.
 let audio,master,soundOn=false;
-document.querySelector('#sound').addEventListener('click',()=>{if(!audio){audio=new AudioContext();master=audio.createGain();master.gain.value=0;master.connect(audio.destination);const buffer=audio.createBuffer(1,audio.sampleRate*3,audio.sampleRate);const data=buffer.getChannelData(0);for(let i=0;i<data.length;i++)data[i]=(Math.random()*2-1)*.18;const noise=audio.createBufferSource();noise.buffer=buffer;noise.loop=true;const filter=audio.createBiquadFilter();filter.type='lowpass';filter.frequency.value=420;noise.connect(filter).connect(master);noise.start();setInterval(()=>{if(!soundOn||document.hidden)return;const t=audio.currentTime;const o=audio.createOscillator(),g=audio.createGain();o.type='sine';o.frequency.setValueAtTime(1050,t);o.frequency.linearRampToValueAtTime(1300,t+.35);o.frequency.linearRampToValueAtTime(970,t+.8);g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.025,t+.15);g.gain.linearRampToValueAtTime(0,t+.9);o.connect(g).connect(master);o.start(t);o.stop(t+1);},15000);}audio.resume();soundOn=!soundOn;master.gain.setTargetAtTime(soundOn?.38:0,audio.currentTime,.4);document.querySelector('#sound').textContent=soundOn?'◉   Sound on':'◌   Sound off';document.querySelector('#sound').setAttribute('aria-pressed',String(soundOn));});
+function ensureAudio(){if(audio)return;audio=new AudioContext();master=audio.createGain();master.gain.value=0;const compressor=audio.createDynamicsCompressor();compressor.threshold.value=-18;compressor.knee.value=12;compressor.ratio.value=6;compressor.attack.value=.003;compressor.release.value=.2;master.connect(compressor).connect(audio.destination);const buffer=audio.createBuffer(1,audio.sampleRate*3,audio.sampleRate);const data=buffer.getChannelData(0);for(let i=0;i<data.length;i++)data[i]=(Math.random()*2-1)*.18;const noise=audio.createBufferSource();noise.buffer=buffer;noise.loop=true;const filter=audio.createBiquadFilter();filter.type='lowpass';filter.frequency.value=420;noise.connect(filter).connect(master);noise.start();setInterval(()=>{if(!soundOn||document.hidden)return;const t=audio.currentTime;const o=audio.createOscillator(),g=audio.createGain();o.type='sine';o.frequency.setValueAtTime(1050,t);o.frequency.linearRampToValueAtTime(1300,t+.35);o.frequency.linearRampToValueAtTime(970,t+.8);g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.025,t+.15);g.gain.linearRampToValueAtTime(0,t+.9);o.connect(g).connect(master);o.start(t);o.stop(t+1);},15000);}
+document.querySelector('#sound').addEventListener('click',()=>{ensureAudio();audio.resume();soundOn=!soundOn;master.gain.setTargetAtTime(soundOn?.38:0,audio.currentTime,.4);document.querySelector('#sound').textContent=soundOn?'◉   Sound on':'◌   Sound off';document.querySelector('#sound').setAttribute('aria-pressed',String(soundOn));});
+// The visitor: quiet, then pounding until the light is flicked off and on, or the door gives way.
+// Each pass of sound is scheduled on the audio clock from the moment the pass begins, so it stays in step with the shake.
+const siege=createSiege(),gameOver=document.querySelector('#gameover-dialog');
+const DOOR=new THREE.Vector2(2.09*.62,-2.67*.68);let passAudio=null,lastPass=-1,gameOverTimer;
+function doorPan(){const toDoor=Math.atan2(-(DOOR.x-camera.position.x),-(DOOR.y-camera.position.z));return -Math.sin(toDoor-yaw);}
+function flipSwitch(){
+  if(siege.phase==='broken')return;
+  const on=!environment.lightOn();environment.setLight(on);setLight(siege,on);renderer.shadowMap.needsUpdate=true;
+  if(soundOn&&audio)scheduleClick(audio,master,audio.currentTime);
+}
+function advanceSiege(dt){
+  const entered=stepSiege(siege,dt);
+  if(entered==='broken'){passAudio?.stop();passAudio=null;lastPass=-1;if(soundOn&&audio)scheduleBreak(audio,master,audio.currentTime+.02,doorPan());
+    gameOverTimer=setTimeout(()=>{document.exitPointerLock?.();keys.clear();gameOver.showModal();},1400);}
+  if(entered==='gone'){passAudio?.stop();passAudio=null;lastPass=-1;}
+  if(siege.phase==='pounding'){const pass=Math.floor(siege.elapsed/DURATION);
+    if(pass!==lastPass){lastPass=pass;passAudio?.stop();passAudio=null;
+      if(soundOn&&audio&&!document.hidden)passAudio=schedulePounding(audio,master,audio.currentTime-siege.elapsed%DURATION,doorPan(),1+pass*.25,siege.presence);}
+    // The knocking and the voice fade with the visitor as the room stays dark.
+    passAudio?.level(siege.presence);}
+}
+gameOver.addEventListener('cancel',e=>e.preventDefault());
 function resize(){renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();}
 window.addEventListener('resize',resize);resize();
 const clock=new THREE.Clock();
@@ -77,13 +108,15 @@ renderer.setAnimationLoop(()=>{
   if(!ui.paused())stepPlayer(jump,player,dx,dz,dt);
   camera.position.set(player.x*.62,FLOOR_HEIGHT+EYE_HEIGHT+jump.height,player.z*.68);
   camera.rotation.set(pitch,yaw,0,'YXZ');
-  environment.update(t);
+  if(!ui.paused())advanceSiege(dt);
+  environment.update(t,siege);
   nearby=null;let nearest=Infinity;
-  for(const detail of details){const distance=Math.hypot(player.x-detail.x,player.z-detail.z);if(distance<detail.r&&distance<nearest){nearby=detail;nearest=distance;}}
-  if(nearby!==lastNearby){prompt.hidden=!nearby;if(nearby)promptText.textContent=nearby.title.toLowerCase();lastNearby=nearby;}
+  // Closest relative to each target's reach, so the small switch beats the wide washstand beside it.
+  for(const detail of details){const distance=Math.hypot(player.x-detail.x,player.z-detail.z)/detail.r;if(distance<1&&distance<nearest){nearby=detail;nearest=distance;}}
+  if(nearby!==lastNearby){prompt.hidden=!nearby;if(nearby)promptText.textContent=nearby.prompt??nearby.title.toLowerCase();lastNearby=nearby;}
   renderer.render(scene,camera);
   if(import.meta.env.DEV){jumpPeak=Math.max(jumpPeak,jump.height);if(frameSamples%30===0)canvas.dataset.diagnostics=JSON.stringify({frameMs:Math.round(frameTime*10)/10,drawCalls:renderer.info.render.calls,renderScale,eyeHeight:EYE_HEIGHT,jumpPeak,support:jump.support,feetHeight:jump.height,position:{x:player.x,z:player.z},batching:environment.batching});}
 });
 requestAnimationFrame(()=>{document.querySelector('#loading').style.opacity='0';setTimeout(()=>document.querySelector('#loading').remove(),700);});
 // Read-only state for checking movement and collision behavior in a browser.
-window.roomState=()=>({position:player.toArray(),yaw,pitch,nearby:nearby?.title,eyeHeight:EYE_HEIGHT,cameraHeight:camera.position.y,jumpHeight:jump.height,renderScale,frameTime,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,objects:scene.children.length});
+window.roomState=()=>({position:player.toArray(),yaw,pitch,nearby:nearby?.title,eyeHeight:EYE_HEIGHT,cameraHeight:camera.position.y,jumpHeight:jump.height,renderScale,frameTime,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,objects:scene.children.length,siege:siege.phase,siegeElapsed:siege.elapsed,presence:siege.presence,lightOn:environment.lightOn(),doorAngle:environment.door.rotation.y,doorPush:environment.door.position.z});
