@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { beddingPoint } from './bedding.js';
+import { rugSlots } from './rug.js';
+import { STORIES } from './stories.js';
+import { buildStoryModel } from './story-models.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -220,6 +223,28 @@ export async function buildRoom(scene){
   const rug=material('cloth','#95815d',1,.018);box(1.27,.012,.92,rug,.15,.032,.32,.003);
   for(let z=-.12;z<.78;z+=.025)rod([-.48,.044,z],[.78,.044,z],.005,wood);
   for(let x=-.46;x<.8;x+=.038){rod([x,.036,-.19-random()*.025],[x,.04,-.12],.004,sheet);rod([x,.04,.78],[x,.036,.84+random()*.025],.004,sheet);}
+  // The middle rug is a display mat with an empty spot for every object to gather.
+  // Each story has two instances: one scattered in the room to find, and a second,
+  // hidden copy waiting in its spot on the rug. All use the transparent materials
+  // from story-models, so they stay out of the static geometry batch and toggle freely.
+  const slots=rugSlots(STORIES.length);
+  const socketMat=new THREE.MeshStandardMaterial({color:'#544834',roughness:1,transparent:true,opacity:.92});
+  const storyItems=[];
+  for(let i=0;i<STORIES.length;i++){
+    const def=STORIES[i],s=slots[i];
+    const socket=mesh(new THREE.CircleGeometry(Math.min(s.w,s.d)*.5,20),socketMat,s.x,.05,s.z);socket.rotation.x=-Math.PI/2;socket.castShadow=false;
+    const group=new THREE.Group();group.position.set(def.x,def.y,def.z);group.rotation.y=random()*6.28;room.add(group);buildStoryModel(group,def.model);
+    const display=new THREE.Group();display.position.set(s.x,.056,s.z);display.scale.setScalar(0);display.visible=false;room.add(display);buildStoryModel(display,def.model);
+    storyItems.push({def,group,display,displayScale:.72,slot:i,x:def.x,z:def.z,on:def.on,collected:false,baseY:def.y,phase:random()*6.28,appear:0,appearStart:0});
+  }
+  let storyClock=0;const STORY_APPEAR=.6;
+  const storyControl={
+    items:storyItems,total:storyItems.length,
+    remaining(){return storyItems.reduce((n,s)=>n+(s.collected?0:1),0);},
+    found(){return this.total-this.remaining();},
+    collect(item){if(!item||item.collected)return null;item.collected=true;item.group.visible=false;item.display.visible=true;item.display.scale.setScalar(0);item.appear=0;item.appearStart=storyClock;return item.def;},
+    reset(){for(const s of storyItems){s.collected=false;s.group.visible=true;s.display.visible=false;s.display.scale.setScalar(0);s.appear=0;}},
+  };
   for(const x of [-1.36,-1.04]){const sole=box(.17,.027,.35,woodDark,x,.048,1.5,.055);sole.rotation.y=-.13;tube([[x-.075,.071,1.48],[x,.14,1.44],[x+.075,.071,1.48]],.019,leather);}
   // Sparse personal belongings on the remaining wall: pegs, a shirt, a shelf.
   box(.70,.075,.05,woodDark,2.88,1.92,.73).rotation.y=Math.PI/2;
@@ -259,10 +284,17 @@ export async function buildRoom(scene){
   }
   for(const o of originals){o.removeFromParent();o.geometry.dispose();}
   let lastNetUpdate=-1;
-  return {room,lamp,flame,batching:{before:originals.length,after:batches.size},update(t){
+  return {room,lamp,flame,stories:storyControl,batching:{before:originals.length,after:batches.size},update(t){
     lamp.intensity=6+Math.sin(t*7)*.13+Math.sin(t*13)*.09;
     flame.scale.x=.022*(1+Math.sin(t*8)*.10);
     dust.rotation.y=Math.sin(t*.025)*.025;
+    storyClock=t;
+    // Scattered objects hover and turn so they catch the eye; gathered ones pop into
+    // their spot on the rug and settle.
+    for(const s of storyItems){
+      if(!s.collected){s.group.position.y=s.baseY+Math.sin(t*1.6+s.phase)*.01;s.group.rotation.y+=.006;continue;}
+      if(s.appear<1){s.appear=Math.min(1,(t-s.appearStart)/STORY_APPEAR);const e=1-Math.pow(1-s.appear,3);s.display.scale.setScalar(s.displayScale*e);s.display.position.y=.056+(1-e)*.05;s.display.rotation.y=s.phase;}
+    }
     if(t-lastNetUpdate<1/20)return;lastNetUpdate=t;
     for(const panel of netPanels){const p=panel.mesh.geometry.attributes.position,b=panel.base;for(let i=0;i<p.count;i++){const y=b[i*3+1];p.setX(i,b[i*3]+Math.sin(t*.7+b[i*3+2]*2+y)*.005*(1-y/2.8));}p.needsUpdate=true;}
   }};
