@@ -26,8 +26,7 @@ renderer.shadowMap.autoUpdate=false;
 renderer.shadowMap.needsUpdate=true;
 const jump=createMotion();
 
-const details=[{x:-1.8,z:.15,r:1.6,title:'THE SINGLE BED',text:'A thin mattress remembers other sleepers. The mosquito net has been mended where it meets the frame.'},{x:-.55,z:-1.82,r:1.1,title:'THE KEROSENE LAMP',text:'The current has gone again. A small flame keeps the room from disappearing.'},{x:.65,z:-2.2,r:1.05,title:'THE WASHSTAND',text:'A pitcher of water. An enamel basin. Enough to wash the dust from your face before bed.'},{x:2.04,z:-2.5,r:1.05,title:'THE CLOSED DOOR',text:'Beyond this door, the other rented rooms are quiet. Grandmother has already drawn the bolt.'},{x:-2.7,z:-.65,r:1.45,title:'THE SHUTTERS',text:'Wooden louvers keep out the gaze, but never the sound. A distant whistle passes through the slats.'},{x:2.25,z:1,r:.85,title:'YOUR BELONGINGS',text:'A change of clothes in a small bag. You have left it closed, as if you might not stay.'}];
-const keys=new Set();let nearby=null,nearbyStory=null,lastPromptLabel=null;
+const keys=new Set();let nearbyStory=null,lastPromptLabel=null;
 const ui=setupUI({canvas,keys});
 // One collection to gather with E: eleven story objects scattered around the room.
 // Each one you find opens a Krik? Krak! card and takes its place on the middle rug.
@@ -50,7 +49,7 @@ canvas.addEventListener('pointerdown',e=>{dragging=true;lastPointer={x:e.clientX
 canvas.addEventListener('pointermove',e=>{if(document.pointerLockElement===canvas)return;if(dragging&&lastPointer){look(e.clientX-lastPointer.x,e.clientY-lastPointer.y);lastPointer={x:e.clientX,y:e.clientY};}});
 for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,()=>{dragging=false;lastPointer=null;});
 document.addEventListener('mousemove',e=>{if(document.pointerLockElement===canvas)look(e.movementX,e.movementY);});
-function inspect(){if(nearbyStory){collectStory(nearbyStory);return;}if(!nearby)return;showNote(nearby.title,nearby.text);}
+function inspect(){if(nearbyStory)collectStory(nearbyStory);}
 window.addEventListener('keydown',e=>{if(ui.paused())return;if(e.code==='Space'&&!(e.target instanceof HTMLButtonElement)){e.preventDefault();if(!e.repeat)startJump(jump);return;}if(['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright','e'].includes(e.key.toLowerCase())){if(e.target instanceof HTMLButtonElement && e.key.toLowerCase()==='e')return;e.preventDefault();keys.add(e.key.toLowerCase());if(e.key.toLowerCase()==='e'&&!e.repeat)inspect();}});
 window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>keys.clear());document.addEventListener('visibilitychange',()=>keys.clear());
 document.querySelectorAll('[data-key]').forEach(b=>{b.addEventListener('pointerdown',e=>{e.preventDefault();b.setPointerCapture(e.pointerId);keys.add(b.dataset.key);if(b.dataset.key==='e')inspect();if(b.dataset.key==='jump')startJump(jump);});for(const event of ['pointerup','pointercancel','lostpointercapture'])b.addEventListener(event,()=>keys.delete(b.dataset.key));});
@@ -91,19 +90,16 @@ renderer.setAnimationLoop(()=>{
   camera.position.set(player.x*.62,FLOOR_HEIGHT+EYE_HEIGHT+jump.height,player.z*.68);
   camera.rotation.set(pitch,yaw,0,'YXZ');
   environment.update(t);
-  nearby=null;let nearest=Infinity;
-  for(const detail of details){const distance=Math.hypot(player.x-detail.x,player.z-detail.z);if(distance<detail.r&&distance<nearest){nearby=detail;nearest=distance;}}
   nearbyStory=nearestStory(player.x,player.z,stories.items,jump.support);
   if(!questSeen&&Math.hypot(player.x-RUG.x,player.z-RUG.z)<1.1){questSeen=true;revealStoryHud();showNote('THE MEMORY RUG','Eleven keepsakes are scattered around the room, each one holding a story. Find them and press E — every object you gather takes its place here on the rug.');}
-  // A collectible to gather takes priority over anything to inspect.
-  const promptLabel=nearbyStory?('take the '+nearbyStory.def.short):(nearby?nearby.title.toLowerCase():null);
+  const promptLabel=nearbyStory?('take the '+nearbyStory.def.short):null;
   if(promptLabel!==lastPromptLabel){prompt.hidden=!promptLabel;if(promptLabel)promptText.textContent=promptLabel;lastPromptLabel=promptLabel;}
   renderer.render(scene,camera);
   if(import.meta.env.DEV){jumpPeak=Math.max(jumpPeak,jump.height);if(frameSamples%30===0)canvas.dataset.diagnostics=JSON.stringify({frameMs:Math.round(frameTime*10)/10,drawCalls:renderer.info.render.calls,renderScale,eyeHeight:EYE_HEIGHT,jumpPeak,support:jump.support,feetHeight:jump.height,position:{x:player.x,z:player.z},batching:environment.batching});}
 });
 requestAnimationFrame(()=>{document.querySelector('#loading').style.opacity='0';setTimeout(()=>document.querySelector('#loading').remove(),700);});
 // Read-only state for checking movement and collision behavior in a browser.
-window.roomState=()=>({position:player.toArray(),yaw,pitch,nearby:nearby?.title,nearbyStory:nearbyStory?nearbyStory.def.id:null,support:jump.support,storiesFound:stories.found(),storiesRemaining:stories.remaining(),eyeHeight:EYE_HEIGHT,cameraHeight:camera.position.y,jumpHeight:jump.height,renderScale,frameTime,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,objects:scene.children.length});
+window.roomState=()=>({position:player.toArray(),yaw,pitch,nearbyStory:nearbyStory?nearbyStory.def.id:null,support:jump.support,storiesFound:stories.found(),storiesRemaining:stories.remaining(),eyeHeight:EYE_HEIGHT,cameraHeight:camera.position.y,jumpHeight:jump.height,renderScale,frameTime,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,objects:scene.children.length});
 // Dev-only hooks used by automated verification; stripped from production builds.
 if(import.meta.env.DEV){
   window.collectStory=i=>collectStory(typeof i==='number'?stories.items[i]:nearbyStory);
