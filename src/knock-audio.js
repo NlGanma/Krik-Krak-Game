@@ -36,6 +36,42 @@ export function scheduleKrik(ctx,out,when){
   const echo=ctx.createDelay(.3),echoGain=ctx.createGain();echo.delayTime.value=.09;echoGain.gain.value=.4;level.connect(echo).connect(echoGain).connect(out);
   const cry=ctx.createBufferSource();cry.buffer=krikBuffer;cry.connect(door);cry.start(when);
 }
+// Ezekiel: the voice outside the door, calling to be let in. Fetched once when sound
+// is first switched on, then played on a steady cadence during the pounding.
+export const EZEKIEL_URL='/assets/sounds/ezekiel-raspy-narrator.mp3';
+let ezekielBuffer=null,ezekielLoading=null;
+export function loadEzekiel(ctx){
+  if(ezekielBuffer||ezekielLoading)return ezekielLoading;
+  ezekielLoading=fetch(EZEKIEL_URL).then(r=>r.arrayBuffer()).then(data=>ctx.decodeAudioData(data)).then(buffer=>{ezekielBuffer=buffer;}).catch(()=>{ezekielLoading=null;});
+  return ezekielLoading;
+}
+// The voice, muffled through the door and panned toward it, faded with the visitor's presence.
+export function scheduleEzekiel(ctx,out,when,pan=0,level=1){
+  if(!ezekielBuffer){loadEzekiel(ctx);return;}
+  const door=ctx.createBiquadFilter();door.type='lowpass';door.frequency.value=1900;door.Q.value=.9;
+  const gain=ctx.createGain();gain.gain.value=1.5*Math.max(0,level);
+  const panner=ctx.createStereoPanner();panner.pan.value=Math.max(-1,Math.min(1,pan));
+  door.connect(gain).connect(panner).connect(out);
+  const echo=ctx.createDelay(.3),echoGain=ctx.createGain();echo.delayTime.value=.1;echoGain.gain.value=.35;gain.connect(echo).connect(echoGain).connect(panner);
+  const cry=ctx.createBufferSource();cry.buffer=ezekielBuffer;cry.connect(door);cry.start(when);
+  return cry;
+}
+// The closing song, played once when the gardenia opens. Fetched when sound is first
+// switched on so it is ready by the ending.
+export const ENDING_URL='/assets/sounds/ending-music.mp3';
+let endingBuffer=null,endingLoading=null;
+export function loadEnding(ctx){
+  if(endingBuffer||endingLoading)return endingLoading;
+  endingLoading=fetch(ENDING_URL).then(r=>r.arrayBuffer()).then(data=>ctx.decodeAudioData(data)).then(buffer=>{endingBuffer=buffer;}).catch(()=>{endingLoading=null;});
+  return endingLoading;
+}
+// Played on its own output (not the master bus), so it stays clear while the room is muted.
+export function playEnding(ctx,out,when=ctx.currentTime){
+  if(!endingBuffer){loadEnding(ctx);return null;}
+  const src=ctx.createBufferSource();src.buffer=endingBuffer;const gain=ctx.createGain();gain.gain.value=.9;
+  src.connect(gain).connect(out);src.start(when);
+  return {stop(){try{src.stop();}catch{}}};
+}
 // One pass of pounding, panned toward wherever the door is relative to the listener.
 // Louder as the visitor loses patience. The handle fades the pass with the visitor's presence or cuts it.
 export function schedulePounding(ctx,out,startTime,pan=0,strength=1,presence=1){

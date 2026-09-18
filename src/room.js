@@ -253,15 +253,20 @@ export async function buildRoom(scene){
     const socket=mesh(new THREE.CircleGeometry(Math.min(s.w,s.d)*.5,20),socketMat,s.x,.05,s.z);socket.rotation.x=-Math.PI/2;socket.castShadow=false;
     const group=new THREE.Group();group.position.set(def.x,def.y,def.z);group.rotation.y=random()*6.28;room.add(group);buildStoryModel(group,def.model);
     const display=new THREE.Group();display.position.set(s.x,.056,s.z);display.scale.setScalar(0);display.visible=false;room.add(display);buildStoryModel(display,def.model);
-    storyItems.push({def,group,display,displayScale:.72,slot:i,x:def.x,z:def.z,on:def.on,collected:false,baseY:def.y,phase:random()*6.28,appear:0,appearStart:0});
+    storyItems.push({def,group,display,displayScale:.72,slot:i,x:def.x,z:def.z,on:def.on,collected:false,placed:false,baseY:def.y,phase:random()*6.28,appear:0,appearStart:0});
   }
   let storyClock=0;const STORY_APPEAR=.6;
+  // An object moves through three states: scattered (found in the room), collected
+  // (picked up and carried), then placed (set into its spot on the rug). The counter
+  // and the ending track how many have been placed.
   const storyControl={
     items:storyItems,total:storyItems.length,
-    remaining(){return storyItems.reduce((n,s)=>n+(s.collected?0:1),0);},
-    found(){return this.total-this.remaining();},
-    collect(item){if(!item||item.collected)return null;item.collected=true;item.group.visible=false;item.display.visible=true;item.display.scale.setScalar(0);item.appear=0;item.appearStart=storyClock;return item.def;},
-    reset(){for(const s of storyItems){s.collected=false;s.group.visible=true;s.display.visible=false;s.display.scale.setScalar(0);s.appear=0;}},
+    placed(){return storyItems.reduce((n,s)=>n+(s.placed?1:0),0);},
+    found(){return this.placed();},
+    remaining(){return this.total-this.placed();},
+    pickUp(item){if(!item||item.collected)return null;item.collected=true;item.group.visible=false;return item.def;},
+    place(item){if(!item||item.placed)return false;item.placed=true;item.collected=true;item.group.visible=false;item.display.visible=true;item.display.scale.setScalar(0);item.appear=0;item.appearStart=storyClock;return true;},
+    reset(){for(const s of storyItems){s.collected=false;s.placed=false;s.group.visible=true;s.display.visible=false;s.display.scale.setScalar(0);s.appear=0;}},
   };
   for(const x of [-1.36,-1.04]){const sole=box(.17,.027,.35,woodDark,x,.048,1.5,.055);sole.rotation.y=-.13;tube([[x-.075,.071,1.48],[x,.14,1.44],[x+.075,.071,1.48]],.019,leather);}
   // Sparse personal belongings on the remaining wall: pegs, a shirt, a shelf.
@@ -327,7 +332,7 @@ export async function buildRoom(scene){
     // their spot on the rug and settle.
     for(const s of storyItems){
       if(!s.collected){s.group.position.y=s.baseY+Math.sin(t*1.6+s.phase)*.01;s.group.rotation.y+=.006;continue;}
-      if(s.appear<1){s.appear=Math.min(1,(t-s.appearStart)/STORY_APPEAR);const e=1-Math.pow(1-s.appear,3);s.display.scale.setScalar(s.displayScale*e);s.display.position.y=.056+(1-e)*.05;s.display.rotation.y=s.phase;}
+      if(s.placed&&s.appear<1){s.appear=Math.min(1,(t-s.appearStart)/STORY_APPEAR);const e=1-Math.pow(1-s.appear,3);s.display.scale.setScalar(s.displayScale*e);s.display.position.y=.056+(1-e)*.05;s.display.rotation.y=s.phase;}
     }
     const dt=Math.min(1/30,Math.max(0,t-lastTime));lastTime=t;
     applyLight(t,dt);
