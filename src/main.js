@@ -7,8 +7,8 @@ import { createSiege, stepSiege, setLight } from './siege.js';
 import { schedulePounding, scheduleBreak, scheduleClick } from './knock-audio.js';
 import { RUG } from './rug.js';
 import { nearestStory } from './stories.js';
+import { createEnding } from './ending.js';
 
-const INTRO='Grandmother rents the rooms she can spare. This one is yours for the night. If someone knocks, put out the light and keep still until they leave.';
 const canvas = document.querySelector('#scene');
 const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
 let renderScale=Math.min(devicePixelRatio,1.5);
@@ -34,33 +34,34 @@ const jump=createMotion();
 const details=[{x:1.18,z:-2.5,r:.8,title:'THE LIGHT SWITCH',prompt:'flip the light switch',action:()=>flipSwitch()}];
 const keys=new Set();let nearby=null,nearbyStory=null,lastPromptLabel=null;
 const ui=setupUI({canvas,keys});
+// The gardenia takes the screen once the rug is full; nothing in the room moves while it opens.
+const ending=createEnding({onRestart:()=>resetRoom()});let endingTimer;
+const halted=()=>ui.paused()||ending.active();
 // One collection to gather with E: eleven story objects scattered around the room.
 // Each one you find opens a Krik? Krak! card and takes its place on the middle rug.
 const stories=environment.stories;
 const storyCounter=document.querySelector('#story-counter'),storyCount=storyCounter.querySelector('.count');
 let questSeen=false;
-function showNote(label,text){document.querySelector('#note-label').textContent=label;document.querySelector('#note-text').textContent=text;ui.showNote();}
 function pulse(el){el.classList.remove('pulse');void el.offsetWidth;el.classList.add('pulse');}
 function revealStoryHud(){storyCounter.hidden=false;storyCount.textContent=String(stories.found());}
 function collectStory(item){const def=stories.collect(item);if(!def)return;revealStoryHud();nearbyStory=null;storyCount.textContent=String(stories.found());pulse(storyCounter);
-  const done=stories.remaining()===0;if(done)storyCounter.classList.add('complete');
-  showNote(def.title.toUpperCase(),def.summary+(done?' — Krik? Krak! Every story rests on the rug now, the call and the answer that keep them alive.':''));}
+  if(stories.remaining()===0){storyCounter.classList.add('complete');
+    // Let the last keepsake settle on the rug before the flower begins.
+    endingTimer=setTimeout(()=>{document.exitPointerLock?.();keys.clear();ending.start();},1800);}}
 let dragging=false, lastPointer=null;
-const lookHint=document.querySelector('#look-hint');
 function look(dx,dy){yaw-=dx*.0025;pitch=THREE.MathUtils.clamp(pitch-dy*.0025,-1.35,1.35);}
-canvas.addEventListener('click',()=>{if(!matchMedia('(pointer:fine)').matches)return;try{const request=canvas.requestPointerLock?.();request?.catch(()=>{lookHint.textContent='Drag to look · WASD to walk';});}catch{lookHint.textContent='Drag to look · WASD to walk';}});
-document.addEventListener('pointerlockchange',()=>{keys.clear();lookHint.textContent=document.pointerLockElement===canvas?'Mouse to look · Esc to release':'Click to look around · or drag';});
-document.addEventListener('pointerlockerror',()=>{lookHint.textContent='Drag to look · WASD to walk';});
+canvas.addEventListener('click',()=>{if(!matchMedia('(pointer:fine)').matches)return;try{canvas.requestPointerLock?.()?.catch(()=>{});}catch{}});
+document.addEventListener('pointerlockchange',()=>keys.clear());
 canvas.addEventListener('pointerdown',e=>{dragging=true;lastPointer={x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId);});
 canvas.addEventListener('pointermove',e=>{if(document.pointerLockElement===canvas)return;if(dragging&&lastPointer){look(e.clientX-lastPointer.x,e.clientY-lastPointer.y);lastPointer={x:e.clientX,y:e.clientY};}});
 for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,()=>{dragging=false;lastPointer=null;});
 document.addEventListener('mousemove',e=>{if(document.pointerLockElement===canvas)look(e.movementX,e.movementY);});
 function inspect(){if(nearby)nearby.action();else if(nearbyStory)collectStory(nearbyStory);}
-window.addEventListener('keydown',e=>{if(ui.paused())return;if(e.code==='Space'&&!(e.target instanceof HTMLButtonElement)){e.preventDefault();if(!e.repeat)startJump(jump);return;}if(['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright','e'].includes(e.key.toLowerCase())){if(e.target instanceof HTMLButtonElement && e.key.toLowerCase()==='e')return;e.preventDefault();keys.add(e.key.toLowerCase());if(e.key.toLowerCase()==='e'&&!e.repeat)inspect();}});
+window.addEventListener('keydown',e=>{if(halted())return;if(e.code==='Space'&&!(e.target instanceof HTMLButtonElement)){e.preventDefault();if(!e.repeat)startJump(jump);return;}if(['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright','e'].includes(e.key.toLowerCase())){if(e.target instanceof HTMLButtonElement && e.key.toLowerCase()==='e')return;e.preventDefault();keys.add(e.key.toLowerCase());if(e.key.toLowerCase()==='e'&&!e.repeat)inspect();}});
 window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>keys.clear());document.addEventListener('visibilitychange',()=>keys.clear());
 document.querySelectorAll('[data-key]').forEach(b=>{b.addEventListener('pointerdown',e=>{e.preventDefault();b.setPointerCapture(e.pointerId);keys.add(b.dataset.key);if(b.dataset.key==='e')inspect();if(b.dataset.key==='jump')startJump(jump);});for(const event of ['pointerup','pointercancel','lostpointercapture'])b.addEventListener(event,()=>keys.delete(b.dataset.key));});
 document.querySelector('#prompt').addEventListener('click',inspect);
-function resetRoom(){player.set(.5,0,1.45);Object.assign(jump,createMotion());yaw=.40;pitch=-.06;keys.clear();document.querySelector('#note-label').textContent='THE GUEST ROOM';document.querySelector('#note-text').textContent=INTRO;Object.assign(siege,createSiege());passAudio?.stop();passAudio=null;lastPass=-1;environment.setLight(true);renderer.shadowMap.needsUpdate=true;clearTimeout(gameOverTimer);gameOver.close();stories.reset();questSeen=false;nearbyStory=null;storyCounter.hidden=true;storyCounter.classList.remove('pulse','complete');storyCount.textContent='0';}
+function resetRoom(){player.set(.5,0,1.45);Object.assign(jump,createMotion());yaw=.40;pitch=-.06;keys.clear();Object.assign(siege,createSiege());passAudio?.stop();passAudio=null;lastPass=-1;environment.setLight(true);renderer.shadowMap.needsUpdate=true;clearTimeout(gameOverTimer);gameOver.close();clearTimeout(endingTimer);ending.stop();stories.reset();questSeen=false;nearbyStory=null;storyCounter.hidden=true;storyCounter.classList.remove('pulse','complete');storyCount.textContent='0';}
 document.querySelector('#reset').addEventListener('click',resetRoom);
 document.querySelector('#restart').addEventListener('click',resetRoom);
 // Optional synthesized night ambience; begins only after the sound button is used.
@@ -105,12 +106,12 @@ renderer.setAnimationLoop(()=>{
   // Downshift resolution on sustained slow frames, never oscillate mid-play.
   if(frameSamples>150&&qualityTimer>3&&frameTime>25&&renderScale>.75){renderScale=Math.max(.75,renderScale-.15);renderer.setPixelRatio(renderScale);qualityTimer=0;}
   let x=0,z=0;
-  if(!ui.paused()&&(keys.has('w')||keys.has('arrowup')))z--;
-  if(!ui.paused()&&(keys.has('s')||keys.has('arrowdown')))z++;
-  if(!ui.paused()&&keys.has('a'))x--;
-  if(!ui.paused()&&keys.has('d'))x++;
-  if(!ui.paused()&&keys.has('arrowleft'))yaw+=dt*1.6;
-  if(!ui.paused()&&keys.has('arrowright'))yaw-=dt*1.6;
+  if(!halted()&&(keys.has('w')||keys.has('arrowup')))z--;
+  if(!halted()&&(keys.has('s')||keys.has('arrowdown')))z++;
+  if(!halted()&&keys.has('a'))x--;
+  if(!halted()&&keys.has('d'))x++;
+  if(!halted()&&keys.has('arrowleft'))yaw+=dt*1.6;
+  if(!halted()&&keys.has('arrowright'))yaw-=dt*1.6;
   let dx=0,dz=0;
   if(x||z){
     const length=Math.hypot(x,z);x/=length;z/=length;
@@ -118,16 +119,16 @@ renderer.setAnimationLoop(()=>{
     dz=(-x*Math.sin(yaw)+z*Math.cos(yaw))*2.25*dt;
 
   }
-  if(!ui.paused())stepPlayer(jump,player,dx,dz,dt);
+  if(!halted())stepPlayer(jump,player,dx,dz,dt);
   camera.position.set(player.x*.62,FLOOR_HEIGHT+EYE_HEIGHT+jump.height,player.z*.68);
   camera.rotation.set(pitch,yaw,0,'YXZ');
-  if(!ui.paused())advanceSiege(dt);
+  if(!halted())advanceSiege(dt);
   environment.update(t,siege);
   nearby=null;let nearest=Infinity;
   // Closest relative to each target's reach, so the small switch beats the wide washstand beside it.
   for(const detail of details){const distance=Math.hypot(player.x-detail.x,player.z-detail.z)/detail.r;if(distance<1&&distance<nearest){nearby=detail;nearest=distance;}}
   nearbyStory=nearestStory(player.x,player.z,stories.items,jump.support);
-  if(!questSeen&&Math.hypot(player.x-RUG.x,player.z-RUG.z)<1.1){questSeen=true;revealStoryHud();showNote('THE MEMORY RUG','Eleven keepsakes are scattered around the room, each one holding a story. Find them and press E — every object you gather takes its place here on the rug.');}
+  if(!questSeen&&Math.hypot(player.x-RUG.x,player.z-RUG.z)<1.1){questSeen=true;revealStoryHud();}
   const promptLabel=nearby?(nearby.prompt??nearby.title.toLowerCase()):nearbyStory?('take the '+nearbyStory.def.short):null;
   if(promptLabel!==lastPromptLabel){prompt.hidden=!promptLabel;if(promptLabel)promptText.textContent=promptLabel;lastPromptLabel=promptLabel;}
   renderer.render(scene,camera);
@@ -140,4 +141,5 @@ window.roomState=()=>({position:player.toArray(),yaw,pitch,nearby:nearby?.title,
 if(import.meta.env.DEV){
   window.collectStory=i=>collectStory(typeof i==='number'?stories.items[i]:nearbyStory);
   window.setView=(y,p)=>{yaw=y;if(p!==undefined)pitch=p;};
+  window.playEnding=()=>ending.start();
 }
