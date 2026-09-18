@@ -1,5 +1,5 @@
 import { HITS, SHOUTS } from './pounding.js';
-// Everything is synthesized: no recordings. Nodes are built per event and scheduled on the audio clock.
+// The knocks, clicks and splintering are synthesized; only the cry is a recording. Nodes are built per event and scheduled on the audio clock.
 let noiseBuffer;
 function noise(ctx){
   if(!noiseBuffer||noiseBuffer.sampleRate!==ctx.sampleRate){noiseBuffer=ctx.createBuffer(1,ctx.sampleRate,ctx.sampleRate);const d=noiseBuffer.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;}
@@ -19,31 +19,22 @@ export function scheduleThump(ctx,out,when,strength=1){
   const tone=ctx.createOscillator();tone.type='triangle';tone.frequency.value=190*(.95+Math.random()*.1);
   const toneGain=env(ctx,when,.002,.16*strength,.06);tone.connect(toneGain).connect(out);tone.start(when);tone.stop(when+.1);
 }
-// "Krik!": a velar burst, a tapped r, then a shouted /i/ that climbs into a shriek and breaks off on the k.
-// Two detuned voices and a sub-octave through hard clipping and formants, with a breathy rasp on top,
-// a corridor echo behind it, and the door between the voice and the room.
+// "Krik!": the visitor's cry, a recording played through the door. The clip is fetched once,
+// the first time the sound is switched on, so it is decoded before the pounding begins.
+export const KRIK_URL='/assets/sounds/alien-master-ominous-dark-scary.mp3';
+let krikBuffer=null,krikLoading=null;
+export function loadKrik(ctx){
+  if(krikBuffer||krikLoading)return krikLoading;
+  krikLoading=fetch(KRIK_URL).then(r=>r.arrayBuffer()).then(data=>ctx.decodeAudioData(data)).then(buffer=>{krikBuffer=buffer;}).catch(()=>{krikLoading=null;});
+  return krikLoading;
+}
+// The door sits between the voice and the room, with a corridor echo behind it.
 export function scheduleKrik(ctx,out,when){
+  if(!krikBuffer){loadKrik(ctx);return;}
   const door=ctx.createBiquadFilter();door.type='lowpass';door.frequency.value=2400;door.Q.value=.8;
-  const level=ctx.createGain();level.gain.value=3.4;door.connect(level).connect(out);
+  const level=ctx.createGain();level.gain.value=1.6;door.connect(level).connect(out);
   const echo=ctx.createDelay(.3),echoGain=ctx.createGain();echo.delayTime.value=.09;echoGain.gain.value=.4;level.connect(echo).connect(echoGain).connect(out);
-  burst(ctx,door,when,.035,2400,2,1.2);
-  const v0=when+.035,end=when+.56;
-  const pitch=[[when+.09,240],[when+.3,430],[when+.42,470],[end,300]];
-  const shout=ctx.createWaveShaper();const curve=new Float32Array(512);for(let i=0;i<512;i++){const x=i/255.5-1;curve[i]=Math.tanh(x*5);}shout.curve=curve;
-  const voiceGain=ctx.createGain();voiceGain.gain.setValueAtTime(.0001,v0);voiceGain.gain.exponentialRampToValueAtTime(.7,when+.06);voiceGain.gain.setValueAtTime(.7,end-.05);voiceGain.gain.exponentialRampToValueAtTime(.0001,end);
-  const vibrato=ctx.createOscillator(),vibratoGain=ctx.createGain();vibrato.frequency.value=7.5;vibratoGain.gain.value=14;vibrato.connect(vibratoGain);
-  for(const [type,ratio,gain] of [['sawtooth',1,.5],['sawtooth',1.008,.5],['square',.5,.18]]){
-    const o=ctx.createOscillator();o.type=type;o.frequency.setValueAtTime(190*ratio,v0);for(const [time,f] of pitch)o.frequency.linearRampToValueAtTime(f*ratio,time);
-    const g=ctx.createGain();g.gain.value=gain;vibratoGain.connect(o.frequency);o.connect(g).connect(shout);o.start(v0);o.stop(end+.02);
-  }
-  const rasp=noise(ctx),raspGain=ctx.createGain();raspGain.gain.setValueAtTime(0,v0);raspGain.gain.linearRampToValueAtTime(.35,when+.25);raspGain.gain.linearRampToValueAtTime(.0001,end);rasp.connect(raspGain).connect(shout);rasp.start(v0);rasp.stop(end+.02);
-  shout.connect(voiceGain);
-  for(const [frequency,q,gain] of [[350,9,1],[2400,11,.7],[3200,11,.45]]){
-    const f=ctx.createBiquadFilter();f.type='bandpass';f.Q.value=q;f.frequency.setValueAtTime(frequency===2400?1300:frequency,v0);if(frequency===2400)f.frequency.linearRampToValueAtTime(2400,when+.09);
-    const g=ctx.createGain();g.gain.value=gain;voiceGain.connect(f).connect(g).connect(door);
-  }
-  vibrato.start(v0);vibrato.stop(end+.02);
-  burst(ctx,door,end,.045,2100,2,.9);
+  const cry=ctx.createBufferSource();cry.buffer=krikBuffer;cry.connect(door);cry.start(when);
 }
 // One pass of pounding, panned toward wherever the door is relative to the listener.
 // Louder as the visitor loses patience. The handle fades the pass with the visitor's presence or cuts it.
