@@ -5,6 +5,8 @@ import { EYE_HEIGHT, FLOOR_HEIGHT, startJump, createMotion, stepPlayer } from '.
 import { DURATION } from './pounding.js';
 import { createSiege, stepSiege, setLight } from './siege.js';
 import { schedulePounding, scheduleBreak, scheduleClick } from './knock-audio.js';
+import { RUG } from './rug.js';
+import { nearestStory } from './stories.js';
 
 const INTRO='Grandmother rents the rooms she can spare. This one is yours for the night. If someone knocks, put out the light and keep still until they leave.';
 const canvas = document.querySelector('#scene');
@@ -28,10 +30,21 @@ renderer.shadowMap.autoUpdate=false;
 renderer.shadowMap.needsUpdate=true;
 const jump=createMotion();
 
-// E does one thing in this room: the light switch beside the door.
+// E does two things in this room: flips the light switch beside the door, or gathers a story object.
 const details=[{x:1.18,z:-2.5,r:.8,title:'THE LIGHT SWITCH',prompt:'flip the light switch',action:()=>flipSwitch()}];
-const keys=new Set();let nearby=null;
+const keys=new Set();let nearby=null,nearbyStory=null,lastPromptLabel=null;
 const ui=setupUI({canvas,keys});
+// One collection to gather with E: eleven story objects scattered around the room.
+// Each one you find opens a Krik? Krak! card and takes its place on the middle rug.
+const stories=environment.stories;
+const storyCounter=document.querySelector('#story-counter'),storyCount=storyCounter.querySelector('.count');
+let questSeen=false;
+function showNote(label,text){document.querySelector('#note-label').textContent=label;document.querySelector('#note-text').textContent=text;ui.showNote();}
+function pulse(el){el.classList.remove('pulse');void el.offsetWidth;el.classList.add('pulse');}
+function revealStoryHud(){storyCounter.hidden=false;storyCount.textContent=String(stories.found());}
+function collectStory(item){const def=stories.collect(item);if(!def)return;revealStoryHud();nearbyStory=null;storyCount.textContent=String(stories.found());pulse(storyCounter);
+  const done=stories.remaining()===0;if(done)storyCounter.classList.add('complete');
+  showNote(def.title.toUpperCase(),def.summary+(done?' — Krik? Krak! Every story rests on the rug now, the call and the answer that keep them alive.':''));}
 let dragging=false, lastPointer=null;
 const lookHint=document.querySelector('#look-hint');
 function look(dx,dy){yaw-=dx*.0025;pitch=THREE.MathUtils.clamp(pitch-dy*.0025,-1.35,1.35);}
@@ -42,12 +55,12 @@ canvas.addEventListener('pointerdown',e=>{dragging=true;lastPointer={x:e.clientX
 canvas.addEventListener('pointermove',e=>{if(document.pointerLockElement===canvas)return;if(dragging&&lastPointer){look(e.clientX-lastPointer.x,e.clientY-lastPointer.y);lastPointer={x:e.clientX,y:e.clientY};}});
 for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,()=>{dragging=false;lastPointer=null;});
 document.addEventListener('mousemove',e=>{if(document.pointerLockElement===canvas)look(e.movementX,e.movementY);});
-function inspect(){nearby?.action();}
+function inspect(){if(nearby)nearby.action();else if(nearbyStory)collectStory(nearbyStory);}
 window.addEventListener('keydown',e=>{if(ui.paused())return;if(e.code==='Space'&&!(e.target instanceof HTMLButtonElement)){e.preventDefault();if(!e.repeat)startJump(jump);return;}if(['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright','e'].includes(e.key.toLowerCase())){if(e.target instanceof HTMLButtonElement && e.key.toLowerCase()==='e')return;e.preventDefault();keys.add(e.key.toLowerCase());if(e.key.toLowerCase()==='e'&&!e.repeat)inspect();}});
 window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>keys.clear());document.addEventListener('visibilitychange',()=>keys.clear());
 document.querySelectorAll('[data-key]').forEach(b=>{b.addEventListener('pointerdown',e=>{e.preventDefault();b.setPointerCapture(e.pointerId);keys.add(b.dataset.key);if(b.dataset.key==='e')inspect();if(b.dataset.key==='jump')startJump(jump);});for(const event of ['pointerup','pointercancel','lostpointercapture'])b.addEventListener(event,()=>keys.delete(b.dataset.key));});
 document.querySelector('#prompt').addEventListener('click',inspect);
-function resetRoom(){player.set(.5,0,1.45);Object.assign(jump,createMotion());yaw=.40;pitch=-.06;keys.clear();document.querySelector('#note-label').textContent='THE GUEST ROOM';document.querySelector('#note-text').textContent=INTRO;Object.assign(siege,createSiege());passAudio?.stop();passAudio=null;lastPass=-1;environment.setLight(true);renderer.shadowMap.needsUpdate=true;clearTimeout(gameOverTimer);gameOver.close();}
+function resetRoom(){player.set(.5,0,1.45);Object.assign(jump,createMotion());yaw=.40;pitch=-.06;keys.clear();document.querySelector('#note-label').textContent='THE GUEST ROOM';document.querySelector('#note-text').textContent=INTRO;Object.assign(siege,createSiege());passAudio?.stop();passAudio=null;lastPass=-1;environment.setLight(true);renderer.shadowMap.needsUpdate=true;clearTimeout(gameOverTimer);gameOver.close();stories.reset();questSeen=false;nearbyStory=null;storyCounter.hidden=true;storyCounter.classList.remove('pulse','complete');storyCount.textContent='0';}
 document.querySelector('#reset').addEventListener('click',resetRoom);
 document.querySelector('#restart').addEventListener('click',resetRoom);
 // Optional synthesized night ambience; begins only after the sound button is used.
@@ -81,7 +94,7 @@ function resize(){renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWi
 window.addEventListener('resize',resize);resize();
 const clock=new THREE.Clock();
 const prompt=document.querySelector('#prompt'),promptText=prompt.querySelector('span');
-let lastNearby=null,frameTime=16.7,frameSamples=0,qualityTimer=0;
+let frameTime=16.7,frameSamples=0,qualityTimer=0;
 let jumpPeak=0;
 let paused=document.hidden;
 document.addEventListener('visibilitychange',()=>{paused=document.hidden;clock.getDelta();});
@@ -113,10 +126,18 @@ renderer.setAnimationLoop(()=>{
   nearby=null;let nearest=Infinity;
   // Closest relative to each target's reach, so the small switch beats the wide washstand beside it.
   for(const detail of details){const distance=Math.hypot(player.x-detail.x,player.z-detail.z)/detail.r;if(distance<1&&distance<nearest){nearby=detail;nearest=distance;}}
-  if(nearby!==lastNearby){prompt.hidden=!nearby;if(nearby)promptText.textContent=nearby.prompt??nearby.title.toLowerCase();lastNearby=nearby;}
+  nearbyStory=nearestStory(player.x,player.z,stories.items,jump.support);
+  if(!questSeen&&Math.hypot(player.x-RUG.x,player.z-RUG.z)<1.1){questSeen=true;revealStoryHud();showNote('THE MEMORY RUG','Eleven keepsakes are scattered around the room, each one holding a story. Find them and press E — every object you gather takes its place here on the rug.');}
+  const promptLabel=nearby?(nearby.prompt??nearby.title.toLowerCase()):nearbyStory?('take the '+nearbyStory.def.short):null;
+  if(promptLabel!==lastPromptLabel){prompt.hidden=!promptLabel;if(promptLabel)promptText.textContent=promptLabel;lastPromptLabel=promptLabel;}
   renderer.render(scene,camera);
   if(import.meta.env.DEV){jumpPeak=Math.max(jumpPeak,jump.height);if(frameSamples%30===0)canvas.dataset.diagnostics=JSON.stringify({frameMs:Math.round(frameTime*10)/10,drawCalls:renderer.info.render.calls,renderScale,eyeHeight:EYE_HEIGHT,jumpPeak,support:jump.support,feetHeight:jump.height,position:{x:player.x,z:player.z},batching:environment.batching});}
 });
 requestAnimationFrame(()=>{document.querySelector('#loading').style.opacity='0';setTimeout(()=>document.querySelector('#loading').remove(),700);});
 // Read-only state for checking movement and collision behavior in a browser.
-window.roomState=()=>({position:player.toArray(),yaw,pitch,nearby:nearby?.title,eyeHeight:EYE_HEIGHT,cameraHeight:camera.position.y,jumpHeight:jump.height,renderScale,frameTime,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,objects:scene.children.length,siege:siege.phase,siegeElapsed:siege.elapsed,presence:siege.presence,lightOn:environment.lightOn(),doorAngle:environment.door.rotation.y,doorPush:environment.door.position.z});
+window.roomState=()=>({position:player.toArray(),yaw,pitch,nearby:nearby?.title,nearbyStory:nearbyStory?nearbyStory.def.id:null,support:jump.support,storiesFound:stories.found(),storiesRemaining:stories.remaining(),eyeHeight:EYE_HEIGHT,cameraHeight:camera.position.y,jumpHeight:jump.height,renderScale,frameTime,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,objects:scene.children.length,siege:siege.phase,siegeElapsed:siege.elapsed,presence:siege.presence,lightOn:environment.lightOn(),doorAngle:environment.door.rotation.y,doorPush:environment.door.position.z});
+// Dev-only hooks used by automated verification; stripped from production builds.
+if(import.meta.env.DEV){
+  window.collectStory=i=>collectStory(typeof i==='number'?stories.items[i]:nearbyStory);
+  window.setView=(y,p)=>{yaw=y;if(p!==undefined)pitch=p;};
+}
