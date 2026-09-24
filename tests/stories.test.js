@@ -10,7 +10,7 @@ test('there are eleven stories, each fully described with a known model',()=>{
  assert.equal(STORIES.length,11);
  const ids=new Set();
  for(const s of STORIES){
-  for(const f of ['id','title','short','object','summary','model','x','z','y'])assert.ok(s[f]!==undefined&&s[f]!=='',`${s.id} missing ${f}`);
+  for(const f of ['id','title','short','object','summary','meaning','model','x','z','y'])assert.ok(s[f]!==undefined&&s[f]!=='',`${s.id} missing ${f}`);
   assert.ok(!ids.has(s.id),`duplicate id ${s.id}`);ids.add(s.id);
   assert.ok(STORY_MODELS.includes(s.model),`no builder for model ${s.model}`);
  }

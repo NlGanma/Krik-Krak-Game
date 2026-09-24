@@ -42,9 +42,13 @@ const halted=()=>ui.paused()||ending.active();
 // Each one you find opens a Krik? Krak! card and takes its place on the middle rug.
 const stories=environment.stories;
 const storyCounter=document.querySelector('#story-counter'),storyCount=storyCounter.querySelector('.count');
+const itemCaption=document.querySelector('#item-caption'),capTitle=itemCaption.querySelector('.cap-title'),capText=itemCaption.querySelector('.cap-text');
 let questSeen=false;
 function pulse(el){el.classList.remove('pulse');void el.offsetWidth;el.classList.add('pulse');}
 function revealStoryHud(){storyCounter.hidden=false;storyCount.textContent=String(stories.found());}
+// The caption at the foot of the screen names the object you are carrying and what it stands for.
+function showCaption(def){capTitle.textContent=def.title;capText.textContent=def.meaning;itemCaption.classList.add('visible');}
+function hideCaption(){itemCaption.classList.remove('visible');}
 // You carry one object at a time: pick it up (it rides in your hands, low enough that
 // you look down to see it), walk to the middle rug, then set it into its spot.
 const heldGroup=new THREE.Group();heldGroup.visible=false;scene.add(heldGroup);
@@ -57,8 +61,8 @@ function pickUpStory(item){if(held)return;const def=stories.pickUp(item);if(!def
   heldGroup.scale.setScalar(1);heldGroup.updateMatrixWorld(true);
   const size=new THREE.Box3().setFromObject(heldGroup).getSize(new THREE.Vector3());
   heldGroup.scale.setScalar(.3/Math.max(size.x,size.y,size.z||.2));
-  heldGroup.visible=true;revealStoryHud();}
-function placeStory(){if(!held||!stories.place(held))return;held=null;heldGroup.visible=false;clearHeld();revealStoryHud();pulse(storyCounter);
+  heldGroup.visible=true;revealStoryHud();showCaption(def);}
+function placeStory(){if(!held||!stories.place(held))return;held=null;heldGroup.visible=false;clearHeld();hideCaption();revealStoryHud();pulse(storyCounter);
   if(stories.remaining()===0){storyCounter.classList.add('complete');
     // Let the last keepsake settle on the rug before the flower begins.
     endingTimer=setTimeout(startEnding,1800);}}
@@ -75,7 +79,7 @@ window.addEventListener('keydown',e=>{if(halted())return;if(e.code==='Space'&&!(
 window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>keys.clear());document.addEventListener('visibilitychange',()=>keys.clear());
 document.querySelectorAll('[data-key]').forEach(b=>{b.addEventListener('pointerdown',e=>{e.preventDefault();b.setPointerCapture(e.pointerId);keys.add(b.dataset.key);if(b.dataset.key==='e')inspect();if(b.dataset.key==='jump')startJump(jump);});for(const event of ['pointerup','pointercancel','lostpointercapture'])b.addEventListener(event,()=>keys.delete(b.dataset.key));});
 document.querySelector('#prompt').addEventListener('click',inspect);
-function resetRoom(){player.set(.5,0,1.45);Object.assign(jump,createMotion());yaw=.40;pitch=-.06;keys.clear();Object.assign(siege,createSiege());passAudio?.stop();passAudio=null;lastPass=-1;environment.setLight(true);renderer.shadowMap.needsUpdate=true;clearTimeout(gameOverTimer);gameOver.close();clearTimeout(endingTimer);ending.stop();endingMusic?.stop?.();endingMusic=null;stories.reset();held=null;heldGroup.visible=false;clearHeld();questSeen=false;nearbyStory=null;storyCounter.hidden=true;storyCounter.classList.remove('pulse','complete');storyCount.textContent='0';}
+function resetRoom(){player.set(.5,0,1.45);Object.assign(jump,createMotion());yaw=.40;pitch=-.06;keys.clear();Object.assign(siege,createSiege());passAudio?.stop();passAudio=null;lastPass=-1;environment.setLight(true);renderer.shadowMap.needsUpdate=true;clearTimeout(gameOverTimer);gameOver.close();clearTimeout(endingTimer);ending.stop();endingMusic?.stop?.();endingMusic=null;stories.reset();held=null;heldGroup.visible=false;clearHeld();hideCaption();questSeen=false;nearbyStory=null;storyCounter.hidden=true;storyCounter.classList.remove('pulse','complete');storyCount.textContent='0';}
 document.querySelector('#reset').addEventListener('click',resetRoom);
 document.querySelector('#restart').addEventListener('click',resetRoom);
 // Optional synthesized night ambience; begins only after the sound button is used.
